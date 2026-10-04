@@ -1,0 +1,648 @@
+--[[
+    ╔══════════════════════════════════════════╗
+    ║              XREZT HUB • KEY GUI         ║
+    ╚══════════════════════════════════════════╝
+    Sections:
+      1. CONFIG
+      2. SERVICES / HELPERS
+      3. >>> PLATOBOOST VERIFICATION LAYER <<<   (insert official code here)
+      4. UI BUILDER
+      5. NOTIFICATIONS / LOADING / STATUS
+      6. VERIFY FLOW
+      7. >>> StartMainScript() <<<               (your main script goes here)
+      8. INIT
+]]
+
+--------------------------------------------------------------------
+-- 1. CONFIG
+--------------------------------------------------------------------
+local CONFIG = {
+	HubName         = "Fluxify",
+	Subtitle        = "Enter your key to continue",
+
+	-- Your Platoboost key-page link (the official link from your dashboard).
+	GetKeyLink      = "https://your-platoboost-link-here",
+
+	VerifyTimeout   = 15,    -- seconds before verification is treated as timed out
+	SuccessDuration = 2.5,   -- seconds the "Key Verified!" screen stays visible
+	MinKeyLength    = 8,     -- basic sanity check; adjust to match your key format
+
+	-- Your own, authorized script. Leave "" to just use the placeholder in StartMainScript().
+	-- Point this ONLY at a script you own/host.
+	MainScriptUrl   = "",
+
+	Theme = {
+		Background = Color3.fromRGB(14, 14, 18),
+		Panel      = Color3.fromRGB(22, 22, 28),
+		Element    = Color3.fromRGB(30, 30, 38),
+		Accent     = Color3.fromRGB(124, 92, 255),
+		AccentAlt  = Color3.fromRGB(80, 160, 255),
+		Text       = Color3.fromRGB(235, 235, 245),
+		SubText    = Color3.fromRGB(140, 140, 160),
+		Success    = Color3.fromRGB(70, 210, 130),
+		Error      = Color3.fromRGB(255, 85, 100),
+		Warning    = Color3.fromRGB(255, 190, 70),
+	},
+}
+
+--------------------------------------------------------------------
+-- 2. SERVICES / HELPERS
+--------------------------------------------------------------------
+local Players          = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local Theme = CONFIG.Theme
+
+-- Guard against repeated initialization
+local env = (getgenv and getgenv()) or _G
+if env.__XreztHubInitialized then
+	return
+end
+env.__XreztHubInitialized = true
+
+local function getGuiParent()
+	local ok, hui = pcall(function() return gethui and gethui() end)
+	if ok and hui then return hui end
+	local okCore, core = pcall(function() return game:GetService("CoreGui") end)
+	if okCore and core then return core end
+	return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local function tween(obj, info, props)
+	local t = TweenService:Create(obj, info, props)
+	t:Play()
+	return t
+end
+
+local EASE_FAST   = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local EASE_SMOOTH = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local EASE_BACK   = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local function new(class, props, children)
+	local inst = Instance.new(class)
+	for k, v in pairs(props or {}) do inst[k] = v end
+	for _, c in ipairs(children or {}) do c.Parent = inst end
+	return inst
+end
+
+local function corner(r) return new("UICorner", { CornerRadius = UDim.new(0, r) }) end
+local function stroke(color, thick, transp)
+	return new("UIStroke", {
+		Color = color, Thickness = thick or 1, Transparency = transp or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+--------------------------------------------------------------------
+-- 3. PLATOBOOST VERIFICATION LAYER
+--------------------------------------------------------------------
+-- Contract: VerifyWithPlatoboost(key) must return a table:
+--     { status = "valid" | "invalid" | "expired" | "error", message = "optional text" }
+--
+-- The rest of the GUI depends ONLY on this return shape, so you can swap
+-- implementations freely.
+--
+-- Do NOT hardcode secrets in a client script that you distribute. Anyone can read it.
+-- Use the credential handling that Platoboost's official docs recommend
+-- (for example, a Service ID and a server-side check where their docs call for it).
+--------------------------------------------------------------------
+
+-- Optional helper for making HTTP requests from an executor environment.
+-- Platoboost's official template may bring its own request function; use theirs if so.
+local function httpRequest(options)
+	local req = (syn and syn.request) or (http and http.request) or http_request or request
+	if not req then
+		return nil, "No HTTP request function available in this environment"
+	end
+	local ok, res = pcall(req, options)
+	if not ok then return nil, tostring(res) end
+	return res
+end
+
+local function VerifyWithPlatoboost(key)
+	-- ╔════════════════════════════════════════════════════════════╗
+	-- ║  >>> INSERT OFFICIAL PLATOBOOST VERIFICATION CODE HERE <<< ║
+	-- ║  Follow the official Platoboost documentation for your     ║
+	-- ║  service. Load your Service ID / credentials from the      ║
+	-- ║  place their docs specify.                                 ║
+	-- ╚════════════════════════════════════════════════════════════╝
+	--
+	-- Map their response onto the contract, for example:
+	--   key accepted              -> return { status = "valid" }
+	--   key not found / wrong     -> return { status = "invalid" }
+	--   key past its expiry       -> return { status = "expired" }
+	--   HTTP / JSON / API failure -> return { status = "error", message = "..." }
+	--
+	-- Use httpRequest({ Url = ..., Method = ..., Headers = ..., Body = ... })
+	-- above if their documentation uses plain HTTP calls.
+
+	return { status = "error", message = "Platoboost verification is not implemented yet" }
+end
+
+-- Wrapper: runs the verifier safely and enforces a timeout.
+local function verifyKeySafe(key)
+	local result, finished = nil, false
+
+	task.spawn(function()
+		local ok, res = pcall(VerifyWithPlatoboost, key)
+		if ok and type(res) == "table" and res.status then
+			result = res
+		elseif ok then
+			result = { status = "error", message = "Malformed verifier response" }
+		else
+			result = { status = "error", message = tostring(res) }
+		end
+		finished = true
+	end)
+
+	local started = os.clock()
+	while not finished do
+		if os.clock() - started >= CONFIG.VerifyTimeout then
+			return { status = "timeout" }
+		end
+		task.wait(0.05)
+	end
+	return result
+end
+
+--------------------------------------------------------------------
+-- 4. UI BUILDER
+--------------------------------------------------------------------
+local ScreenGui = new("ScreenGui", {
+	Name = "XreztHubKeyGui",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	DisplayOrder = 999,
+})
+
+-- Dim backdrop
+local Backdrop = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Parent = ScreenGui,
+})
+
+-- Main window (scale-aware + clamped for phones)
+local Main = new("Frame", {
+	Name = "Main",
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.new(0.9, 0, 0, 300),
+	BackgroundColor3 = Theme.Background,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	Parent = ScreenGui,
+}, {
+	corner(16),
+	stroke(Theme.Accent, 1.5, 0.55),
+	new("UISizeConstraint", { MaxSize = Vector2.new(400, 300), MinSize = Vector2.new(280, 280) }),
+})
+
+-- Subtle accent gradient bar on top
+local TopBar = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 3),
+	BackgroundColor3 = Theme.Accent,
+	BorderSizePixel = 0,
+	Parent = Main,
+}, {
+	new("UIGradient", {
+		Color = ColorSequence.new(Theme.Accent, Theme.AccentAlt),
+	}),
+})
+
+local Title = new("TextLabel", {
+	Position = UDim2.new(0, 20, 0, 16),
+	Size = UDim2.new(1, -40, 0, 28),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	Text = CONFIG.HubName,
+	TextColor3 = Theme.Text,
+	TextSize = 24,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = Main,
+}, {
+	new("UIGradient", { Color = ColorSequence.new(Theme.Text, Theme.AccentAlt) }),
+})
+
+local Subtitle = new("TextLabel", {
+	Position = UDim2.new(0, 20, 0, 46),
+	Size = UDim2.new(1, -40, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = CONFIG.Subtitle,
+	TextColor3 = Theme.SubText,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = Main,
+})
+
+-- Content container (hidden during success screen)
+local Content = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundTransparency = 1,
+	Parent = Main,
+})
+
+local KeyBox = new("TextBox", {
+	Position = UDim2.new(0, 20, 0, 82),
+	Size = UDim2.new(1, -40, 0, 44),
+	BackgroundColor3 = Theme.Element,
+	BorderSizePixel = 0,
+	Font = Enum.Font.Gotham,
+	PlaceholderText = "Paste your key here...",
+	PlaceholderColor3 = Theme.SubText,
+	Text = "",
+	TextColor3 = Theme.Text,
+	TextSize = 14,
+	ClearTextOnFocus = false,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+	Parent = Content,
+}, {
+	corner(10),
+	new("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }),
+})
+local KeyStroke = stroke(Theme.Element, 1.5)
+KeyStroke.Parent = KeyBox
+
+local function makeButton(text, pos, size, color)
+	local btn = new("TextButton", {
+		Position = pos,
+		Size = size,
+		BackgroundColor3 = color,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Font = Enum.Font.GothamBold,
+		Text = text,
+		TextColor3 = Theme.Text,
+		TextSize = 14,
+		Parent = Content,
+	}, { corner(10) })
+
+	btn.MouseEnter:Connect(function()
+		if btn:GetAttribute("Disabled") then return end
+		tween(btn, EASE_FAST, { BackgroundColor3 = color:Lerp(Color3.new(1, 1, 1), 0.12) })
+	end)
+	btn.MouseLeave:Connect(function()
+		tween(btn, EASE_FAST, { BackgroundColor3 = color })
+	end)
+	btn.MouseButton1Down:Connect(function()
+		if btn:GetAttribute("Disabled") then return end
+		tween(btn, TweenInfo.new(0.08), { Size = size - UDim2.fromOffset(4, 2) })
+	end)
+	btn.MouseButton1Up:Connect(function()
+		tween(btn, EASE_FAST, { Size = size })
+	end)
+	return btn
+end
+
+local GetKeyBtn = makeButton("Get Key", UDim2.new(0, 20, 0, 140), UDim2.new(0.5, -26, 0, 42), Theme.Element)
+local VerifyBtn = makeButton("Verify", UDim2.new(0.5, 6, 0, 140), UDim2.new(0.5, -26, 0, 42), Theme.Accent)
+
+-- Status row: spinner + label
+local StatusRow = new("Frame", {
+	Position = UDim2.new(0, 20, 0, 198),
+	Size = UDim2.new(1, -40, 0, 30),
+	BackgroundTransparency = 1,
+	Parent = Content,
+})
+
+local Spinner = new("Frame", {
+	Size = UDim2.fromOffset(18, 18),
+	Position = UDim2.new(0, 0, 0.5, -9),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = StatusRow,
+}, {
+	corner(9),
+	new("UIStroke", { Color = Theme.AccentAlt, Thickness = 2.5 }),
+})
+local spinnerGradient = new("UIGradient", {
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.5, 0),
+		NumberSequenceKeypoint.new(0.51, 1),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+})
+spinnerGradient.Parent = Spinner:FindFirstChildOfClass("UIStroke")
+
+local StatusLabel = new("TextLabel", {
+	Position = UDim2.new(0, 0, 0, 0),
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamMedium,
+	Text = "Waiting for key...",
+	TextColor3 = Theme.SubText,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextWrapped = true,
+	Parent = StatusRow,
+})
+
+local Footer = new("TextLabel", {
+	Position = UDim2.new(0, 20, 1, -28),
+	Size = UDim2.new(1, -40, 0, 16),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = CONFIG.HubName .. " • Key System",
+	TextColor3 = Theme.SubText,
+	TextTransparency = 0.4,
+	TextSize = 11,
+	Parent = Content,
+})
+
+-- Success screen (hidden until verified)
+local SuccessFrame = new("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Theme.Background,
+	BackgroundTransparency = 1,
+	Visible = false,
+	ZIndex = 5,
+	Parent = Main,
+})
+local SuccessIcon = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.4),
+	Size = UDim2.fromOffset(0, 0),
+	BackgroundColor3 = Theme.Success,
+	Font = Enum.Font.GothamBold,
+	Text = "✓",
+	TextColor3 = Color3.new(1, 1, 1),
+	TextSize = 40,
+	TextTransparency = 1,
+	ZIndex = 6,
+	Parent = SuccessFrame,
+}, { corner(100) })
+local SuccessText = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.68),
+	Size = UDim2.new(1, -40, 0, 30),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.GothamBold,
+	Text = "Key Verified!",
+	TextColor3 = Theme.Success,
+	TextSize = 24,
+	TextTransparency = 1,
+	ZIndex = 6,
+	Parent = SuccessFrame,
+})
+local SuccessSub = new("TextLabel", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.79),
+	Size = UDim2.new(1, -40, 0, 18),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.Gotham,
+	Text = "Loading " .. CONFIG.HubName .. "...",
+	TextColor3 = Theme.SubText,
+	TextSize = 13,
+	TextTransparency = 1,
+	ZIndex = 6,
+	Parent = SuccessFrame,
+})
+
+-- Notification container (toasts)
+local Toasts = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 16),
+	Size = UDim2.new(0.9, 0, 0, 0),
+	BackgroundTransparency = 1,
+	Parent = ScreenGui,
+}, {
+	new("UISizeConstraint", { MaxSize = Vector2.new(360, math.huge) }),
+	new("UIListLayout", {
+		Padding = UDim.new(0, 8),
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}),
+})
+
+--------------------------------------------------------------------
+-- 5. NOTIFICATIONS / LOADING / STATUS
+--------------------------------------------------------------------
+local function notify(message, kind, duration)
+	local color = (kind == "success" and Theme.Success)
+		or (kind == "error" and Theme.Error)
+		or (kind == "warning" and Theme.Warning)
+		or Theme.AccentAlt
+
+	local toast = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 44),
+		BackgroundColor3 = Theme.Panel,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = Toasts,
+	}, { corner(10) })
+	local tStroke = stroke(color, 1.5, 1)
+	tStroke.Parent = toast
+
+	local accent = new("Frame", {
+		Size = UDim2.new(0, 4, 1, -16),
+		Position = UDim2.new(0, 8, 0, 8),
+		BackgroundColor3 = color,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = toast,
+	}, { corner(2) })
+
+	local label = new("TextLabel", {
+		Position = UDim2.new(0, 22, 0, 0),
+		Size = UDim2.new(1, -30, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		Text = message,
+		TextColor3 = Theme.Text,
+		TextSize = 13,
+		TextTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextWrapped = true,
+		Parent = toast,
+	})
+
+	tween(toast, EASE_SMOOTH, { BackgroundTransparency = 0.05 })
+	tween(tStroke, EASE_SMOOTH, { Transparency = 0.3 })
+	tween(accent, EASE_SMOOTH, { BackgroundTransparency = 0 })
+	tween(label, EASE_SMOOTH, { TextTransparency = 0 })
+
+	task.delay(duration or 3, function()
+		if not toast.Parent then return end
+		tween(toast, EASE_SMOOTH, { BackgroundTransparency = 1 })
+		tween(tStroke, EASE_SMOOTH, { Transparency = 1 })
+		tween(accent, EASE_SMOOTH, { BackgroundTransparency = 1 })
+		local out = tween(label, EASE_SMOOTH, { TextTransparency = 1 })
+		out.Completed:Wait()
+		toast:Destroy()
+	end)
+end
+
+local function setStatus(text, kind)
+	local color = (kind == "success" and Theme.Success)
+		or (kind == "error" and Theme.Error)
+		or (kind == "warning" and Theme.Warning)
+		or (kind == "loading" and Theme.AccentAlt)
+		or Theme.SubText
+	StatusLabel.Text = text
+	tween(StatusLabel, EASE_FAST, { TextColor3 = color })
+end
+
+local function shake(guiObject)
+	local origin = guiObject.Position
+	for i = 1, 4 do
+		local dir = (i % 2 == 0) and 1 or -1
+		tween(guiObject, TweenInfo.new(0.05), {
+			Position = origin + UDim2.fromOffset(dir * 6, 0),
+		}).Completed:Wait()
+	end
+	tween(guiObject, TweenInfo.new(0.05), { Position = origin })
+end
+
+-- Spinner animation
+local spinnerConn
+local function setLoading(isLoading)
+	if isLoading then
+		Spinner.Visible = true
+		StatusLabel.Position = UDim2.new(0, 28, 0, 0)
+		StatusLabel.Size = UDim2.new(1, -28, 1, 0)
+		if not spinnerConn then
+			spinnerConn = RunService.RenderStepped:Connect(function(dt)
+				spinnerGradient.Rotation = (spinnerGradient.Rotation + dt * 420) % 360
+			end)
+		end
+	else
+		Spinner.Visible = false
+		StatusLabel.Position = UDim2.new(0, 0, 0, 0)
+		StatusLabel.Size = UDim2.new(1, 0, 1, 0)
+		if spinnerConn then
+			spinnerConn:Disconnect()
+			spinnerConn = nil
+		end
+	end
+end
+
+local function setButtonDisabled(btn, disabled, label)
+	btn:SetAttribute("Disabled", disabled)
+	btn.Active = not disabled
+	btn.Text = label or btn.Text
+	tween(btn, EASE_FAST, { BackgroundTransparency = disabled and 0.5 or 0 })
+end
+
+-- Input focus feedback
+KeyBox.Focused:Connect(function()
+	tween(KeyStroke, EASE_FAST, { Color = Theme.Accent })
+end)
+KeyBox.FocusLost:Connect(function()
+	tween(KeyStroke, EASE_FAST, { Color = Theme.Element })
+end)
+
+--------------------------------------------------------------------
+-- 6. VERIFY FLOW
+--------------------------------------------------------------------
+local isVerifying = false
+local isFinished  = false  -- set once success flow begins (prevents double init)
+
+local StartMainScript -- forward declaration
+
+local function showSuccessAndContinue()
+	isFinished = true
+	SuccessFrame.Visible = true
+	tween(SuccessFrame, EASE_SMOOTH, { BackgroundTransparency = 0 })
+	tween(Content, EASE_SMOOTH, {}) -- (content is covered by SuccessFrame)
+
+	tween(SuccessIcon, EASE_BACK, { Size = UDim2.fromOffset(72, 72), TextTransparency = 0 })
+	task.delay(0.15, function() tween(SuccessText, EASE_SMOOTH, { TextTransparency = 0 }) end)
+	task.delay(0.3,  function() tween(SuccessSub,  EASE_SMOOTH, { TextTransparency = 0 }) end)
+
+	notify("Key Verified!", "success", 2.5)
+
+	task.wait(CONFIG.SuccessDuration)
+
+	-- Fade out and destroy the key GUI
+	tween(Main, EASE_SMOOTH, { Size = UDim2.new(0.9, 0, 0, 0), BackgroundTransparency = 1 })
+	task.wait(0.4)
+	setLoading(false)
+	ScreenGui:Destroy()
+
+	StartMainScript()
+end
+
+local function onVerifyPressed()
+	if isVerifying or isFinished then return end
+
+	local key = (KeyBox.Text or ""):gsub("%s+", "")
+
+	-- Empty / malformed key
+	if key == "" then
+		setStatus("Please enter a key", "warning")
+		notify("Key field is empty", "warning")
+		task.spawn(shake, KeyBox)
+		return
+	end
+	if #key < CONFIG.MinKeyLength then
+		setStatus("Invalid or expired key", "error")
+		notify("Invalid or expired key", "error")
+		task.spawn(shake, KeyBox)
+		return
+	end
+
+	-- Lock UI
+	isVerifying = true
+	setButtonDisabled(VerifyBtn, true, "Verifying...")
+	setButtonDisabled(GetKeyBtn, true)
+	KeyBox.TextEditable = false
+	setLoading(true)
+	setStatus("Verifying key...", "loading")
+
+	local result = verifyKeySafe(key)
+
+	-- Unlock UI
+	setLoading(false)
+	isVerifying = false
+	KeyBox.TextEditable = true
+	setButtonDisabled(VerifyBtn, false, "Verify")
+	setButtonDisabled(GetKeyBtn, false)
+
+	local status = result.status
+	if status == "valid" then
+		setStatus("Key accepted", "success")
+		task.spawn(showSuccessAndContinue)
+
+	elseif status == "invalid" then
+		setStatus("Invalid or expired key", "error")
+		notify("Invalid or expired key", "error")
+		task.spawn(shake, KeyBox)
+
+	elseif status == "expired" then
+		setStatus("Invalid or expired key", "error")
+		notify("Invalid or expired key", "error")
+		task.spawn(shake, KeyBox)
+
+	elseif status == "timeout" then
+		setStatus("Verification timed out. Try again.", "warning")
+		notify("Verification timed out", "warning")
+
+	else -- "error" or anything unexpected
+		setStatus("Network/API error. Try again later.", "error")
+		notify(result.message or "Network/API error", "error", 4)
+		warn("[XreztHub] Verification error:", result.message)
+	end
+end
+
+VerifyBtn.MouseButton1Click:Connect(onVerifyPressed)
+KeyBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then onVerifyPressed() end
+end)
+
+GetKeyBtn.MouseButton1Click:Connect(function()
+	if isVerifying then return end
+	local link = CONFIG.GetKeyLink
+	if setclipboard then
+		pcall(setclipboard, link)
+		notify("Key link copied to clipboard", "success")
+		setStatus("Link copied. Open it in your browser.", "loading")
+	else
+		notify("
